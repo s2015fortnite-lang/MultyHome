@@ -1,5 +1,8 @@
 """Получение устройств и отправка команд в Яндекс Дом."""
 
+import os
+import time
+
 import requests
 
 
@@ -36,10 +39,13 @@ def describe_device(device):
 class YandexHome:
     def __init__(self, token):
         self.token = token
+        # У каждого дома своё соединение. Заголовок с токеном передаём явно.
+        self.session = requests.Session()
 
     def request(self, method, path, data=None):
+        started = time.perf_counter()
         try:
-            response = requests.request(
+            response = self.session.request(
                 method,
                 "https://api.iot.yandex.net/v1.0" + path,
                 headers={"Authorization": "Bearer " + self.token},
@@ -48,6 +54,10 @@ class YandexHome:
             )
         except requests.RequestException:
             raise HomeError("Нет связи с Яндекс Домом. Проверьте подключение.") from None
+        finally:
+            if os.getenv("DIAGNOSTICS") == "1":
+                # Не печатаем токен, ID устройства и ответ Яндекса.
+                print(f"Яндекс {method}: {time.perf_counter() - started:.2f} с", flush=True)
         if response.status_code in (401, 403):
             raise HomeError("Яндекс отклонил доступ. Проверьте токен и права iot:view, iot:control.")
         if response.status_code != 200:

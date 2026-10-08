@@ -13,6 +13,10 @@ from accounts import Accounts
 from yandex_home import DemoHome, HomeError, describe_device, supports_on_off
 
 
+# Сохраняем соединение с Telegram между запросами.
+telegram_session = requests.Session()
+
+
 HELP = """Команды:
 /id — ваш Telegram ID
 /connect — подключить свой Яндекс Дом
@@ -67,16 +71,23 @@ class Commands:
 
 
 def telegram_request(token, method, data):
+    started = time.perf_counter()
     try:
-        response = requests.post(
+        response = telegram_session.post(
             f"https://api.telegram.org/bot{token}/{method}", json=data, timeout=40
         )
+        if response.status_code == 409:
+            raise HomeError("Telegram: конфликт запуска. Остановите второй экземпляр этого бота и проверьте webhook.")
         if response.status_code != 200:
             raise HomeError(f"Ошибка Telegram API: HTTP {response.status_code}.")
         result = response.json()
     except (requests.RequestException, ValueError):
         # Не выводим текст исключения: URL Telegram содержит токен бота.
         raise HomeError("Нет связи с Telegram или получен некорректный ответ.") from None
+    finally:
+        if os.getenv("DIAGNOSTICS") == "1":
+            # URL, токен и содержимое сообщений не записываются.
+            print(f"Telegram {method}: {time.perf_counter() - started:.2f} с", flush=True)
     if not result.get("ok"):
         raise HomeError("Telegram отклонил запрос.")
     return result["result"]
@@ -107,9 +118,8 @@ def message_reply(message, accounts, sessions):
     if not text:
         return "Отправьте текстовую команду. /help — список команд."
     # Сначала проверяем наличие подключения, затем берём персональный список.
-    home = accounts.home(user_id)
     if user_id not in sessions:
-        sessions[user_id] = Commands(home)
+        sessions[user_id] = Commands(accounts.home(user_id))
     return sessions[user_id].handle(text)
 
 
@@ -143,7 +153,12 @@ def run_bot(token, accounts):
                             })
                         except HomeError:
                             pass
-                    reply = message_reply(message, accounts, sessions)
+                    started = time.perf_counter()
+                    try:
+                        reply = message_reply(message, accounts, sessions)
+                    finally:
+                        if os.getenv("DIAGNOSTICS") == "1":
+                            print(f"Обработка команды: {time.perf_counter() - started:.2f} с", flush=True)
                 except HomeError as error:
                     reply = str(error)
                 if reply:

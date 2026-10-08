@@ -103,7 +103,7 @@ class BotTests(unittest.TestCase):
                 "state": {"instance": "on", "action_result": {"status": "DONE"}},
             }]}],
         }
-        with patch("yandex_home.requests.request", return_value=response) as request:
+        with patch("yandex_home.requests.Session.request", return_value=response) as request:
             YandexHome("fake-token").switch("lamp", True)
         data = request.call_args.kwargs["json"]
         self.assertEqual(data["devices"][0]["id"], "lamp")
@@ -117,16 +117,48 @@ class BotTests(unittest.TestCase):
                 "state": {"instance": "on", "action_result": {"status": "ERROR"}},
             }]}],
         }
-        with patch("yandex_home.requests.request", return_value=response):
+        with patch("yandex_home.requests.Session.request", return_value=response):
             with self.assertRaises(HomeError):
                 YandexHome("fake-token").switch("lamp", True)
 
     def test_telegram_network_error_does_not_expose_token(self):
         import requests
-        with patch("bot.requests.post", side_effect=requests.ConnectionError("URL with secret token")):
+        with patch("bot.telegram_session.post", side_effect=requests.ConnectionError("URL with secret token")):
             with self.assertRaises(HomeError) as error:
                 telegram_request("fake-token", "getMe", {})
         self.assertNotIn("secret", str(error.exception))
+
+    def test_connections_do_not_mix_user_tokens(self):
+        first_home = YandexHome("test-first-token")
+        second_home = YandexHome("test-second-token")
+        self.assertIsNot(first_home.session, second_home.session)
+        response = Mock(status_code=200)
+        response.json.return_value = {"status": "ok", "devices": []}
+        with patch.object(first_home.session, "request", return_value=response) as first:
+            with patch.object(second_home.session, "request", return_value=response) as second:
+                first_home.list_devices()
+                second_home.list_devices()
+                first_home.list_devices()
+        self.assertEqual(first.call_count, 2)
+        self.assertEqual(first.call_args.kwargs["headers"]["Authorization"], "Bearer test-first-token")
+        self.assertEqual(second.call_args.kwargs["headers"]["Authorization"], "Bearer test-second-token")
+
+    def test_diagnostics_do_not_print_sensitive_request_data(self):
+        import io
+        import requests
+        from contextlib import redirect_stdout
+        output = io.StringIO()
+        with patch.dict("os.environ", {"DIAGNOSTICS": "1"}):
+            with redirect_stdout(output):
+                with patch("bot.telegram_session.post", side_effect=requests.ConnectionError("secret-url")):
+                    with self.assertRaises(HomeError):
+                        telegram_request("secret-token", "sendMessage", {"text": "secret-message"})
+                with patch("yandex_home.requests.Session.request", side_effect=requests.ConnectionError("secret-url")):
+                    with self.assertRaises(HomeError):
+                        YandexHome("secret-token").get_device("secret-device")
+        self.assertIn("Telegram sendMessage:", output.getvalue())
+        self.assertIn("Яндекс GET:", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
 
 
 if __name__ == "__main__":
