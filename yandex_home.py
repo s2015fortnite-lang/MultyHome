@@ -11,7 +11,7 @@ class HomeError(Exception):
 
 
 def supports_on_off(device):
-    for capability in device.get("capabilities", []):
+    for capability in device.get("capabilities") or []:
         if capability.get("type") == "devices.capabilities.on_off":
             return True
     return False
@@ -20,17 +20,26 @@ def supports_on_off(device):
 def describe_device(device):
     lines = [device.get("name", "Без названия")]
     lines.append("Тип: " + device.get("type", "неизвестен"))
-    for capability in device.get("capabilities", []):
-        state = capability.get("state", {})
+    has_readings = False
+    for capability in device.get("capabilities") or []:
+        # Яндекс может вернуть state: null, если состояние недоступно.
+        state = capability.get("state") or {}
         if "value" in state:
+            has_readings = True
             value = state["value"]
-            if state.get("instance") == "on":
+            if value is None:
+                value = "неизвестно"
+            elif state.get("instance") == "on":
                 value = "включено" if value else "выключено"
             lines.append(f"{state.get('instance', 'состояние')}: {value}")
-    for prop in device.get("properties", []):
-        state = prop.get("state", {})
+    for prop in device.get("properties") or []:
+        state = prop.get("state") or {}
         if "value" in state:
-            lines.append(f"{state.get('instance', 'показатель')}: {state['value']}")
+            has_readings = True
+            value = state["value"] if state["value"] is not None else "неизвестно"
+            lines.append(f"{state.get('instance', 'показатель')}: {value}")
+    if not has_readings:
+        lines.append("Яндекс не передал значения состояния этого устройства.")
     if device.get("error_code"):
         lines.append("Устройство недоступно: " + str(device["error_code"]))
     return "\n".join(lines)
@@ -92,8 +101,8 @@ class YandexHome:
                 continue
             for capability in device.get("capabilities", []):
                 if capability.get("type") == "devices.capabilities.on_off":
-                    state = capability.get("state", {})
-                    action_result = state.get("action_result", {})
+                    state = capability.get("state") or {}
+                    action_result = state.get("action_result") or {}
                     if state.get("instance") == "on" and action_result.get("status") == "DONE":
                         return
         raise HomeError("Устройство не подтвердило выполнение команды. Проверьте его состояние.")

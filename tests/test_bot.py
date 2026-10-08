@@ -5,10 +5,55 @@ from unittest.mock import Mock, patch
 
 from accounts import Accounts
 from bot import Commands, message_reply, telegram_request
-from yandex_home import DemoHome, HomeError, YandexHome
+from yandex_home import DemoHome, HomeError, YandexHome, describe_device
 
 
 class BotTests(unittest.TestCase):
+    def test_status_with_null_states_does_not_crash(self):
+        home = DemoHome()
+        home.devices = [{
+            "id": "station", "name": "Яндекс Станция Миди",
+            "type": "devices.types.smart_speaker",
+            "capabilities": [{"type": "devices.capabilities.range", "state": None}],
+            "properties": [{"type": "devices.properties.float", "state": None}],
+        }]
+        commands = Commands(home)
+        commands.handle("/devices")
+        reply = commands.handle("/status 1")
+        self.assertIn("Яндекс Станция Миди", reply)
+        self.assertIn("не передал значения состояния", reply)
+        # После /status бот продолжает принимать команды.
+        self.assertIn("Яндекс Станция Миди", commands.handle("/devices"))
+
+    def test_null_reading_does_not_mean_switched_off(self):
+        reply = describe_device({"capabilities": [{
+            "state": {"instance": "on", "value": None},
+        }]})
+        self.assertIn("on: неизвестно", reply)
+        self.assertNotIn("выключено", reply)
+
+    def test_null_collections_and_mixed_states(self):
+        self.assertIn("не передал", describe_device({"capabilities": None, "properties": None}))
+        reply = describe_device({
+            "capabilities": [{"state": None}, {"state": {"instance": "on", "value": True}}],
+            "properties": [{"state": None}, {"state": {"instance": "temperature", "value": 23}}],
+        })
+        self.assertIn("on: включено", reply)
+        self.assertIn("temperature: 23", reply)
+
+    def test_null_action_result_is_reported_as_error(self):
+        response = Mock(status_code=200)
+        for state in (None, {"instance": "on", "action_result": None}):
+            with self.subTest(state=state):
+                response.json.return_value = {"status": "ok", "devices": [{
+                    "id": "lamp", "capabilities": [{
+                        "type": "devices.capabilities.on_off", "state": state,
+                    }],
+                }]}
+                with patch("yandex_home.requests.Session.request", return_value=response):
+                    with self.assertRaises(HomeError):
+                        YandexHome("fake-token").switch("lamp", True)
+
     def test_switch_and_read_state(self):
         commands = Commands(DemoHome())
         self.assertIn("Сначала", commands.handle("/on 1"))
