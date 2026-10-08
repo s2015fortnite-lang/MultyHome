@@ -66,7 +66,7 @@ class BotTests(unittest.TestCase):
     def test_wrong_number_does_not_control_devices(self):
         commands = Commands(DemoHome())
         commands.handle("/devices")
-        for text in ("/on 0", "/on 3", "/on -1", "/on abc"):
+        for text in ("/on 0", "/on 5", "/on -1", "/on abc"):
             commands.handle(text)
         self.assertIn("on: выключено", commands.handle("/status 1"))
 
@@ -75,7 +75,7 @@ class BotTests(unittest.TestCase):
         home.devices = [{"id": "sensor", "name": "Датчик", "capabilities": []}]
         commands = Commands(home)
         commands.handle("/devices")
-        with patch.object(home, "switch") as switch:
+        with patch.object(home, "set_capability") as switch:
             self.assertIn("не поддерживает", commands.handle("/on 1"))
             switch.assert_not_called()
 

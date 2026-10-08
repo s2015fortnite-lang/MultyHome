@@ -86,24 +86,30 @@ class YandexHome:
         return self.request("GET", "/devices/" + device_id)
 
     def switch(self, device_id, enabled):
+        self.set_capability(device_id, "devices.capabilities.on_off", "on", enabled)
+
+    def set_capability(self, device_id, capability_type, instance, value):
+        state = {"instance": instance, "value": value}
+        if capability_type == "devices.capabilities.range":
+            state["relative"] = False
         data = {
             "devices": [{
                 "id": device_id,
                 "actions": [{
-                    "type": "devices.capabilities.on_off",
-                    "state": {"instance": "on", "value": enabled},
+                    "type": capability_type,
+                    "state": state,
                 }],
             }],
         }
         result = self.request("POST", "/devices/actions", data)
-        for device in result.get("devices", []):
+        for device in result.get("devices") or []:
             if device.get("id") != device_id:
                 continue
-            for capability in device.get("capabilities", []):
-                if capability.get("type") == "devices.capabilities.on_off":
+            for capability in device.get("capabilities") or []:
+                if capability.get("type") == capability_type:
                     state = capability.get("state") or {}
                     action_result = state.get("action_result") or {}
-                    if state.get("instance") == "on" and action_result.get("status") == "DONE":
+                    if state.get("instance") == instance and action_result.get("status") == "DONE":
                         return
         raise HomeError("Устройство не подтвердило выполнение команды. Проверьте его состояние.")
 
@@ -126,6 +132,33 @@ class DemoHome:
                     "state": {"instance": "on", "value": False},
                 }],
             })
+        self.devices[0]["capabilities"].extend([
+            {"type": "devices.capabilities.range", "parameters": {
+                "instance": "brightness", "unit": "unit.percent",
+                "range": {"min": 1, "max": 100, "precision": 1},
+            }, "state": {"instance": "brightness", "value": 50}},
+            {"type": "devices.capabilities.color_setting", "parameters": {
+                "color_model": "rgb", "temperature_k": {"min": 2700, "max": 6500},
+                "color_scene": {"scenes": [{"id": "reading"}, {"id": "party"}]},
+            }, "state": {"instance": "rgb", "value": 16777215}},
+        ])
+        self.devices.append({"id": "demo-climate", "name": "Учебный кондиционер",
+            "type": "devices.types.thermostat.ac", "capabilities": [
+                {"type": "devices.capabilities.on_off", "state": {"instance": "on", "value": False}},
+                {"type": "devices.capabilities.range", "parameters": {
+                    "instance": "temperature", "unit": "unit.temperature.celsius",
+                    "range": {"min": 16, "max": 30, "precision": 0.5},
+                }, "state": {"instance": "temperature", "value": 22}},
+                {"type": "devices.capabilities.mode", "parameters": {
+                    "instance": "thermostat", "modes": [{"value": "auto"}, {"value": "cool"}, {"value": "heat"}],
+                }, "state": {"instance": "thermostat", "value": "auto"}},
+            ]})
+        self.devices.append({"id": "demo-speaker", "name": "Учебная колонка",
+            "type": "devices.types.smart_speaker", "capabilities": [
+                {"type": "devices.capabilities.range", "parameters": {
+                    "instance": "volume", "range": {"min": 0, "max": 100, "precision": 1},
+                }, "state": {"instance": "volume", "value": 30}},
+            ]})
 
     def list_devices(self):
         return self.devices
@@ -137,5 +170,16 @@ class DemoHome:
         raise HomeError("Устройство не найдено.")
 
     def switch(self, device_id, enabled):
+        self.set_capability(device_id, "devices.capabilities.on_off", "on", enabled)
+
+    def set_capability(self, device_id, capability_type, instance, value):
         device = self.get_device(device_id)
-        device["capabilities"][0]["state"]["value"] = enabled
+        for capability in device.get("capabilities") or []:
+            if capability.get("type") != capability_type:
+                continue
+            if capability_type in ("devices.capabilities.range", "devices.capabilities.mode"):
+                if (capability.get("parameters") or {}).get("instance") != instance:
+                    continue
+            capability["state"] = {"instance": instance, "value": value}
+            return
+        raise HomeError("Устройство не поддерживает эту возможность.")

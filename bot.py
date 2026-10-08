@@ -9,6 +9,7 @@ import requests
 from dotenv import load_dotenv
 
 from accounts import Accounts
+from capabilities import describe_capabilities, prepare_action
 
 from yandex_home import DemoHome, HomeError, describe_device, supports_on_off
 
@@ -25,8 +26,18 @@ HELP = """Команды:
 /status 1 — состояние устройства №1
 /on 1 — включить устройство №1
 /off 1 — выключить устройство №1
+/capabilities 1 — доступные настройки устройства №1
+/brightness 1 50 — яркость
+/color 1 FF0000 — красный цвет
+/white 1 4000 — температура белого света, К
+/temperature 3 22.5 — заданная температура
+/mode 3 thermostat cool — режим охлаждения
+/volume 4 30 — громкость
+/range 1 ИМЯ ЗНАЧЕНИЕ — другая числовая настройка
+/scene 1 СЦЕНА — сцена освещения
 
-Сначала выполните /devices. Номер берётся из этого списка."""
+Сначала /devices, затем /capabilities НОМЕР.
+Числа в примерах условные: настройки зависят от устройства."""
 
 
 class Commands:
@@ -49,24 +60,34 @@ class Commands:
                 return "В этом Яндекс Доме нет устройств."
             lines = []
             for number, device in enumerate(self.devices, start=1):
-                available = "вкл/выкл" if supports_on_off(device) else "просмотр состояния"
+                available = "вкл/выкл" if supports_on_off(device) else "настройки: /capabilities"
                 lines.append(f"{number}. {device.get('name', 'Без названия')} ({available})")
             return "\n".join(lines)
-        if command not in ("/on", "/off", "/status"):
+        argument_counts = {
+            "/on": 0, "/off": 0, "/status": 0, "/capabilities": 0,
+            "/brightness": 1, "/color": 1, "/white": 1, "/temperature": 1,
+            "/volume": 1, "/scene": 1, "/mode": 2, "/range": 2,
+        }
+        if command not in argument_counts:
             return "Неизвестная команда.\n" + HELP
         if not self.devices:
             return "Сначала выполните /devices."
-        if len(parts) != 2 or not parts[1].isdigit():
-            return f"Укажите номер устройства. Например: {command} 1"
+        if len(parts) != 2 + argument_counts[command] or not parts[1].isdigit():
+            return "Неверный формат команды. Посмотрите /help и /capabilities НОМЕР."
         number = int(parts[1])
         if number < 1 or number > len(self.devices):
             return "Такого номера нет. Выполните /devices."
         device = self.devices[number - 1]
         if command == "/status":
             return describe_device(self.home.get_device(device["id"]))
-        if not supports_on_off(device):
+        if command == "/capabilities":
+            return describe_capabilities(self.home.get_device(device["id"]), number)
+        # Читаем свежие возможности, чтобы не отправить неподдерживаемую команду.
+        current_device = self.home.get_device(device["id"])
+        if command in ("/on", "/off") and not supports_on_off(current_device):
             return "Устройство не поддерживает включение/выключение через Яндекс API."
-        self.home.switch(device["id"], command == "/on")
+        capability_type, instance, value = prepare_action(current_device, command, parts[2:])
+        self.home.set_capability(device["id"], capability_type, instance, value)
         return f"{device.get('name', 'Устройство')}: команда выполнена."
 
 
@@ -187,7 +208,10 @@ def main():
                 break
             if text.strip() == "exit":
                 break
-            print(commands.handle(text))
+            try:
+                print(commands.handle(text))
+            except HomeError as error:
+                print(error)
         return
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
