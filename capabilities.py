@@ -1,6 +1,7 @@
 """Читаем возможности из ответа Яндекса и проверяем команды пользователя."""
 
 import colorsys
+import json
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -11,6 +12,73 @@ ON_OFF = "devices.capabilities.on_off"
 RANGE = "devices.capabilities.range"
 MODE = "devices.capabilities.mode"
 COLOR = "devices.capabilities.color_setting"
+
+# Эти типы встречаются у Станций, но не описаны в публичном протоколе умений.
+STATION_CAPABILITIES = {
+    "equalizer": "Эквалайзер",
+    "audio_player": "Аудиоплеер",
+    "voice_activity_detector": "Обнаружение голоса",
+    "speaker_do_not_disturb": "Не беспокоить",
+    "localization": "Язык и регион",
+    "voice_enrollment": "Распознавание пользователей по голосу",
+    "stereo_pair": "Стереопара",
+    "phone_calls": "Звонки",
+    "kids_pro": "Детские функции",
+    "assistant_response_style": "Стиль ответов Алисы",
+}
+
+
+def data_shape(value, depth=0):
+    """Показываем структуру данных, заменяя все значения обозначениями типов."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "<boolean>"
+    if isinstance(value, (int, float)):
+        return "<number>"
+    if isinstance(value, str):
+        return "<string>"
+    if depth >= 5:
+        return "<nested data>"
+    if isinstance(value, list):
+        # Для схемы достаточно первого элемента: не раскрываем списки людей.
+        return [data_shape(value[0], depth + 1)] if value else []
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            # Не выводим динамические ключи с ID, адресами и другими данными.
+            if not re.fullmatch(r"[a-zA-Z_]{1,64}", str(key)):
+                result["<other keys>"] = "<hidden>"
+                continue
+            if any(word in key.lower() for word in ("token", "secret", "password", "cookie", "authorization")):
+                result[key] = "<hidden>"
+                continue
+            result[key] = data_shape(item, depth + 1)
+        return result
+    return "<unknown>"
+
+
+def capability_info(device):
+    """Диагностика только для чтения: не отправляет команды устройству."""
+    items = []
+    for capability in device.get("capabilities") or []:
+        capability_type = capability.get("type")
+        # Не включаем имя устройства, ID, quasar_info, токены или значения state.
+        if not isinstance(capability_type, str) or not re.fullmatch(r"devices\.capabilities\.[a-z_]+", capability_type):
+            capability_type = "<unknown capability>"
+        item = {
+            "type": capability_type,
+            "parameters_shape": data_shape(capability.get("parameters")),
+            "state_shape": data_shape(capability.get("state")),
+        }
+        for key in ("retrievable", "reportable"):
+            if isinstance(capability.get(key), bool):
+                item[key] = capability[key]
+        items.append(item)
+    return (
+        "Структура возможностей устройства (без значений). Команды управления не отправлялись.\n"
+        + json.dumps({"capabilities": items}, ensure_ascii=False, indent=2)
+    )
 
 
 def find_capability(device, capability_type, instance=None):
@@ -125,6 +193,7 @@ def prepare_action(device, command, arguments):
 
 def describe_capabilities(device, number):
     lines = [device.get("name", "Без названия") + ": доступные команды"]
+    has_station_settings = False
     for capability in device.get("capabilities") or []:
         capability_type = capability.get("type")
         parameters = capability.get("parameters") or {}
@@ -162,8 +231,18 @@ def describe_capabilities(device, number):
             if values:
                 lines.append("Сцены освещения: " + ", ".join(values))
                 lines.append(f"/scene {number} СЦЕНА")
+        elif capability_type in ("devices.capabilities." + name for name in STATION_CAPABILITIES):
+            name = capability_type.removeprefix("devices.capabilities.")
+            lines.append(STATION_CAPABILITIES[name] + ": формат управления через текущий API не подтверждён.")
+            has_station_settings = True
         else:
             lines.append(f"{capability_type}: управление пока не реализовано.")
+    if has_station_settings:
+        lines.append(
+            "Это настройки Станции, отсутствующие в публичном описании типов умений. "
+            "Наличие в списке не подтверждает возможность управления нашим API.\n"
+            f"Структура для проверки: /capability_info {number}"
+        )
     if len(lines) == 1:
         lines.append("Яндекс не передал поддерживаемые возможности управления.")
     return "\n".join(lines)

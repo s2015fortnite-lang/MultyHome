@@ -9,7 +9,7 @@ import requests
 from dotenv import load_dotenv
 
 from accounts import Accounts
-from capabilities import describe_capabilities, prepare_action
+from capabilities import capability_info, describe_capabilities, prepare_action
 
 from yandex_home import DemoHome, HomeError, describe_device, supports_on_off
 
@@ -27,6 +27,7 @@ HELP = """Команды:
 /on 1 — включить устройство №1
 /off 1 — выключить устройство №1
 /capabilities 1 — доступные настройки устройства №1
+/capability_info 1 — структура возможностей без персональных значений
 /brightness 1 50 — яркость
 /color 1 FF0000 — красный цвет
 /white 1 4000 — температура белого света, К
@@ -64,7 +65,7 @@ class Commands:
                 lines.append(f"{number}. {device.get('name', 'Без названия')} ({available})")
             return "\n".join(lines)
         argument_counts = {
-            "/on": 0, "/off": 0, "/status": 0, "/capabilities": 0,
+            "/on": 0, "/off": 0, "/status": 0, "/capabilities": 0, "/capability_info": 0,
             "/brightness": 1, "/color": 1, "/white": 1, "/temperature": 1,
             "/volume": 1, "/scene": 1, "/mode": 2, "/range": 2,
         }
@@ -82,6 +83,8 @@ class Commands:
             return describe_device(self.home.get_device(device["id"]))
         if command == "/capabilities":
             return describe_capabilities(self.home.get_device(device["id"]), number)
+        if command == "/capability_info":
+            return capability_info(self.home.get_device(device["id"]))
         # Читаем свежие возможности, чтобы не отправить неподдерживаемую команду.
         current_device = self.home.get_device(device["id"])
         if command in ("/on", "/off") and not supports_on_off(current_device):
