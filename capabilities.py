@@ -191,7 +191,7 @@ def prepare_action(device, command, arguments):
     raise HomeError("Неизвестная команда управления.")
 
 
-def describe_capabilities(device, number):
+def describe_capabilities(device, number, station_connected=False):
     lines = [device.get("name", "Без названия") + ": доступные команды"]
     has_station_settings = False
     for capability in device.get("capabilities") or []:
@@ -231,6 +231,14 @@ def describe_capabilities(device, number):
             if values:
                 lines.append("Сцены освещения: " + ", ".join(values))
                 lines.append(f"/scene {number} СЦЕНА")
+        elif capability_type == "devices.capabilities.equalizer":
+            if station_connected:
+                lines.append(f"Эквалайзер (отдельный API Станции): /station {number}")
+                lines.append(f"/equalizer {number} on или /equalizer {number} off")
+                lines.append(f"/eqbands {number} УСИЛЕНИЕ1 УСИЛЕНИЕ2 УСИЛЕНИЕ3 УСИЛЕНИЕ4 УСИЛЕНИЕ5 (целые -6…6 дБ)")
+            else:
+                lines.append(f"Эквалайзер: требуется отдельное подключение. /station {number}")
+            has_station_settings = True
         elif capability_type in ("devices.capabilities." + name for name in STATION_CAPABILITIES):
             name = capability_type.removeprefix("devices.capabilities.")
             lines.append(STATION_CAPABILITIES[name] + ": формат управления через текущий API не подтверждён.")
@@ -240,7 +248,7 @@ def describe_capabilities(device, number):
     if has_station_settings:
         lines.append(
             "Это настройки Станции, отсутствующие в публичном описании типов умений. "
-            "Наличие в списке не подтверждает возможность управления нашим API.\n"
+            "Эквалайзер подключается отдельно; остальные типы пока не реализованы.\n"
             f"Структура для проверки: /capability_info {number}"
         )
     if len(lines) == 1:

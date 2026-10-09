@@ -1,6 +1,7 @@
 """Простой Telegram-бот. Запуск: python bot.py."""
 
 import argparse
+import json
 import os
 import time
 from pathlib import Path
@@ -9,9 +10,10 @@ import requests
 from dotenv import load_dotenv
 
 from accounts import Accounts
-from capabilities import capability_info, describe_capabilities, prepare_action
+from capabilities import capability_info, data_shape, describe_capabilities, prepare_action
 
 from yandex_home import DemoHome, HomeError, describe_device, supports_on_off
+from station_api import DemoStation
 
 
 # Сохраняем соединение с Telegram между запросами.
@@ -36,14 +38,19 @@ HELP = """Команды:
 /volume 4 30 — громкость
 /range 1 ИМЯ ЗНАЧЕНИЕ — другая числовая настройка
 /scene 1 СЦЕНА — сцена освещения
+/station 5 — подключение Станции и состояние эквалайзера
+/station_info 5 — структура конфигурации для добавления следующих настроек
+/equalizer 5 on — включить эквалайзер; off — выключить
+/eqbands 5 -3 0 0 0 3 — пять усилений эквалайзера, от -6 до 6 дБ
 
 Сначала /devices, затем /capabilities НОМЕР.
 Числа в примерах условные: настройки зависят от устройства."""
 
 
 class Commands:
-    def __init__(self, home):
+    def __init__(self, home, station=None):
         self.home = home
+        self.station = station
         self.devices = []
 
     def handle(self, text):
@@ -68,6 +75,7 @@ class Commands:
             "/on": 0, "/off": 0, "/status": 0, "/capabilities": 0, "/capability_info": 0,
             "/brightness": 1, "/color": 1, "/white": 1, "/temperature": 1,
             "/volume": 1, "/scene": 1, "/mode": 2, "/range": 2,
+            "/station": 0, "/station_info": 0, "/equalizer": 1, "/eqbands": 5,
         }
         if command not in argument_counts:
             return "Неизвестная команда.\n" + HELP
@@ -82,9 +90,26 @@ class Commands:
         if command == "/status":
             return describe_device(self.home.get_device(device["id"]))
         if command == "/capabilities":
-            return describe_capabilities(self.home.get_device(device["id"]), number)
+            return describe_capabilities(self.home.get_device(device["id"]), number, self.station is not None)
         if command == "/capability_info":
             return capability_info(self.home.get_device(device["id"]))
+        if command in ("/station", "/station_info", "/equalizer", "/eqbands"):
+            if self.station is None:
+                return "Станция ещё не подключена. Выполните /id и локально запустите station_login.py по инструкции STATION_SETUP.md, затем перезапустите бота."
+            if command == "/station":
+                return self.station.equalizer(device["id"])
+            if command == "/station_info":
+                config, _ = self.station.get_config(device["id"])
+                return "Структура конфигурации Станции (без значений):\n" + json.dumps(data_shape(config), ensure_ascii=False, indent=2)
+            if command == "/equalizer":
+                if parts[2] not in ("on", "off"):
+                    return "Используйте /equalizer НОМЕР on или /equalizer НОМЕР off."
+                return self.station.equalizer(device["id"], enabled=parts[2] == "on")
+            try:
+                gains = [int(value) for value in parts[2:]]
+            except ValueError:
+                return "Укажите пять целых усилений от -6 до 6 дБ."
+            return self.station.equalizer(device["id"], gains=gains)
         # Читаем свежие возможности, чтобы не отправить неподдерживаемую команду.
         current_device = self.home.get_device(device["id"])
         if command in ("/on", "/off") and not supports_on_off(current_device):
@@ -143,7 +168,7 @@ def message_reply(message, accounts, sessions):
         return "Отправьте текстовую команду. /help — список команд."
     # Сначала проверяем наличие подключения, затем берём персональный список.
     if user_id not in sessions:
-        sessions[user_id] = Commands(accounts.home(user_id))
+        sessions[user_id] = Commands(accounts.home(user_id), accounts.station(user_id))
     return sessions[user_id].handle(text)
 
 
@@ -202,7 +227,8 @@ def main():
     args = parser.parse_args()
     load_dotenv(Path(__file__).with_name(".env"))
     if args.demo_console:
-        commands = Commands(DemoHome())
+        home = DemoHome()
+        commands = Commands(home, DemoStation(home))
         print("Учебный режим. /help — справка, exit — выход.")
         while True:
             try:

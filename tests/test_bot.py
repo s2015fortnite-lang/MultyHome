@@ -66,7 +66,7 @@ class BotTests(unittest.TestCase):
     def test_wrong_number_does_not_control_devices(self):
         commands = Commands(DemoHome())
         commands.handle("/devices")
-        for text in ("/on 0", "/on 5", "/on -1", "/on abc"):
+        for text in ("/on 0", "/on 6", "/on -1", "/on abc"):
             commands.handle(text)
         self.assertIn("on: выключено", commands.handle("/status 1"))
 

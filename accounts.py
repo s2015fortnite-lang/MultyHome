@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import requests
 
 from yandex_home import DemoHome, HomeError, YandexHome
+from station_api import DemoStation, StationStore
 
 
 class Accounts:
@@ -19,6 +20,7 @@ class Accounts:
         self.path = path or Path(__file__).with_name("users.json")
         self.waiting = {}
         self.demo_homes = {}
+        self.station_store = StationStore(self.path.with_name("station_sessions.json"))
         # Файл содержит секреты. Не выводим его содержимое в логи.
         if self.path.exists():
             try:
@@ -66,6 +68,11 @@ class Accounts:
             "\nСделайте это в течение 5 минут. Секрет приложения и токен доступа сюда не отправляйте."
         )
 
+    def station(self, user_id):
+        if self.demo:
+            return DemoStation(self.home(user_id))
+        return self.station_store.connection(user_id)
+
     def authorize(self, user_id, code):
         if self.demo:
             raise HomeError("В учебном режиме авторизация не требуется.")
@@ -95,6 +102,10 @@ class Accounts:
         return "Ваш Яндекс Дом подключён. Выполните /devices."
 
     def disconnect(self, user_id):
+        try:
+            self.station_store.remove(user_id)
+        except OSError:
+            raise HomeError("Не удалось удалить сессию Станции. Проверьте права на station_sessions.json.") from None
         self.waiting.pop(user_id, None)
         self.demo_homes.pop(user_id, None)
         self.tokens.pop(str(user_id), None)

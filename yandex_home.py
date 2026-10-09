@@ -5,6 +5,8 @@ import time
 
 import requests
 
+from station_state import station_state_lines
+
 
 class HomeError(Exception):
     """Ошибка, которую можно безопасно показать пользователю."""
@@ -24,6 +26,10 @@ def describe_device(device):
     for capability in device.get("capabilities") or []:
         # Яндекс может вернуть state: null, если состояние недоступно.
         state = capability.get("state") or {}
+        station_lines = station_state_lines(capability.get("type") or "", state)
+        if station_lines:
+            has_readings = True
+            lines.extend(station_lines)
         if "value" in state:
             has_readings = True
             value = state["value"]
@@ -158,6 +164,11 @@ class DemoHome:
                 {"type": "devices.capabilities.range", "parameters": {
                     "instance": "volume", "range": {"min": 0, "max": 100, "precision": 1},
                 }, "state": {"instance": "volume", "value": 30}},
+            ]})
+        self.devices.append({"id": "demo-station", "name": "Учебная Станция",
+            "type": "devices.types.smart_speaker", "capabilities": [
+                {"type": "devices.capabilities.equalizer", "parameters": {"instance": "equalizer"},
+                 "state": {"enabled": False, "smart_enabled": False, "prevent_clipping": True}},
             ]})
 
     def list_devices(self):

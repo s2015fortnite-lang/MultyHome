@@ -5,4 +5,6 @@ __pycache__/
 .pytest_cache/
 users.json
 users.tmp
+station_sessions.json
+station_sessions.tmp
 *.log
